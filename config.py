@@ -3,6 +3,12 @@ ALLOWED_CHAT_IDS = {-1002570175567}
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 HISTORICO_MAX = 1000
 
+API_ROULETTE_USER = "DougurasuBets"
+API_ROULETTE_PASSWORD = "9cGGSdFdZBBuA3ppfRKrtTDc"
+API_ROULETTE_RESULTS_URL = (
+    "https://api.dougurasu-bets.online/api/v1/playtech/results/brazilian-roulette"
+)
+
 ROULETTES = [
     "Roleta Brasileira",
 ]

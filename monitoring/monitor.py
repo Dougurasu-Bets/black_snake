@@ -3,7 +3,13 @@ import aiohttp
 from collections import defaultdict, deque
 from datetime import datetime
 from bot.utils import escape_markdown_v2, send_telegram_message
-from config import ROULETTES, HISTORICO_MAX
+from config import (
+    API_ROULETTE_PASSWORD,
+    API_ROULETTE_RESULTS_URL,
+    API_ROULETTE_USER,
+    HISTORICO_MAX,
+    ROULETTES,
+)
 
 BLACK_SNAKE = [2, 6, 10, 13, 17, 24, 26, 28, 31, 35]
 HISTORICO_COMPLETO_SIZE = 500
@@ -11,7 +17,6 @@ TENDENCIA_UPDATE_INTERVAL = 10
 MINIMO_OCORRENCIAS = 5
 MINIMO_RODADAS_ANALISE = 50
 
-API_URL = "https://casino.dougurasu-bets.online:9000/playtech/results.json"
 LINK_MESA_BASE = "https://geralbet.bet.br/live-casino/game/3763038"
 
 estado_mesas = defaultdict(
@@ -115,11 +120,21 @@ async def enviar_tendencias_telegram(
     await send_telegram_message(message)
 
 
-async def fetch_results_http(session, mesa_nome):
-    async with session.get(API_URL) as resp:
+async def fetch_results_http(session):
+    auth = aiohttp.BasicAuth(API_ROULETTE_USER, API_ROULETTE_PASSWORD)
+    async with session.get(API_ROULETTE_RESULTS_URL, auth=auth) as resp:
+        resp.raise_for_status()
         data = await resp.json()
-        resultados = data.get(mesa_nome, {}).get("results", [])
-        return [int(r["number"]) for r in resultados if r.get("number", "").isdigit()]
+        resultados = data.get("results") or []
+        out = []
+        for r in resultados:
+            num = r.get("number")
+            if num is None:
+                continue
+            s = str(num).strip()
+            if s.isdigit():
+                out.append(int(s))
+        return out
 
 
 async def monitor_roulette(roulette_id):
@@ -148,7 +163,7 @@ async def monitor_roulette(roulette_id):
                         }
                     )
 
-                resultados = await fetch_results_http(session, roulette_id)
+                resultados = await fetch_results_http(session)
                 if not resultados:
                     await asyncio.sleep(2)
                     continue
