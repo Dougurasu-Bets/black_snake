@@ -3,7 +3,12 @@ import aiohttp
 from collections import defaultdict, deque
 from datetime import datetime
 from bot.utils import escape_markdown_v2, send_telegram_message
-from config import ROULETTES, HISTORICO_MAX
+from config import (
+    API_ROULETTE_PASSWORD,
+    API_ROULETTE_RESULTS_URL,
+    API_ROULETTE_USER,
+    ROULETTES,
+)
 
 BLACK_SNAKE = [2, 6, 8, 10, 13, 17, 20, 24, 26, 28, 31, 35]
 HISTORICO_COMPLETO_SIZE = 500
@@ -11,7 +16,6 @@ TENDENCIA_UPDATE_INTERVAL = 10
 MINIMO_OCORRENCIAS = 5
 MINIMO_RODADAS_ANALISE = 50
 
-API_URL = "https://casino.dougurasu-bets.online:9000/playtech/results.json"
 LINK_MESA_BASE = "https://geralbet.bet.br/live-casino/game/3763038"
 
 estado_mesas = defaultdict(
@@ -79,29 +83,41 @@ def get_top_tendencias(tendencias, n=10):
     return sorted(filtrado.items(), key=lambda x: -x[1]["porcentagem"])[:n]
 
 
+
 async def notificar_entrada(roulette_id, numero, tendencias):
     stats = tendencias[numero]
     message = f"🔥 ENTRADA Padrão BLACK SNAKE - {numero} ({stats['chamou_black_snake']}/{stats['total']})\n"
     await send_telegram_message(message, LINK_MESA_BASE)
 
 
-async def enviar_tendencias_telegram(
-    roulette_id, top_tendencias, tendencias, historico_size
-):
-    message = "📊 *TENDÊNCIAS ATUALIZADAS* 📊\n\n"
-    message += "⚠️ *BLACK SNAKE* ⚠️\n\n"
-    message += f"🎰 Mesa: {escape_markdown_v2(roulette_id)} - Playtech\n\n"
-    for i, (num, stats) in enumerate(top_tendencias, 1):
-        message += f"{i}º - Número *{num}*: _{stats['porcentagem']}%_ ({stats['chamou_black_snake']}/{stats['total']})\n\n"
-    message += "\n🔔 Entradas confirmadas quando estes números aparecerem!"
-    await send_telegram_message(message)
-
-
 async def fetch_results_http(session, mesa_nome):
-    async with session.get(API_URL) as resp:
+    """
+    Resposta esperada:
+    provider, tableSlug, results[{number, resultMultiplier?}], tableName, launchAlias
+    """
+    async with session.get(API_ROULETTE_RESULTS_URL) as resp:
+        resp.raise_for_status()
         data = await resp.json()
-        resultados = data.get(mesa_nome, {}).get("results", [])
-        return [int(r["number"]) for r in resultados if r.get("number", "").isdigit()]
+
+    if data.get("tableName") and data["tableName"] != mesa_nome:
+        print(
+            f"[AVISO] tableName API={data.get('tableName')!r} != config={mesa_nome!r}"
+        )
+
+    raw = data.get("results") or []
+    numeros = []
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        n = r.get("number")
+        try:
+            numero = int(n)
+        except (TypeError, ValueError):
+            continue
+        numeros.append(
+            {"number": numero, "multiplier": r.get("resultMultiplier")}
+        )
+    return numeros
 
 
 async def monitor_roulette(roulette_id):
@@ -114,7 +130,8 @@ async def monitor_roulette(roulette_id):
     mesa["gale"] = 0
     mesa["ultimo_numero_processado"] = None
 
-    async with aiohttp.ClientSession() as session:
+    auth = aiohttp.BasicAuth(API_ROULETTE_USER, API_ROULETTE_PASSWORD)
+    async with aiohttp.ClientSession(auth=auth) as session:
         while True:
             try:
                 hoje = datetime.now().date()
@@ -147,15 +164,11 @@ async def monitor_roulette(roulette_id):
                 mesa["contador_rodadas"] += 1
 
                 if historico_size >= MINIMO_RODADAS_ANALISE:
-                    nova_tendencia = analisar_tendencias(mesa["historico"])
+                    nova_tendencia = analisar_tendencias(
+                        [item["number"] for item in mesa["historico"]]
+                    )
                     novo_top = get_top_tendencias(nova_tendencia)
                     novo_top_numeros = [num for num, _ in novo_top]
-
-                    mudou_porcentagem = any(
-                        mesa["ultima_porcentagem_top"].get(num)
-                        != nova_tendencia[num]["porcentagem"]
-                        for num in novo_top_numeros
-                    )
 
                     mesa["tendencias"] = nova_tendencia
                     mesa["top_tendencias"] = novo_top_numeros
@@ -164,7 +177,8 @@ async def monitor_roulette(roulette_id):
                         for num in novo_top_numeros
                     }
 
-                    numero_atual = mesa["historico"][0]
+                    numero_atual = mesa["historico"][0]["number"]
+                    multiplicador_atual = mesa["historico"][0].get("multiplier")
 
                     if numero_atual == mesa["ultimo_numero_processado"]:
                         await asyncio.sleep(2)
@@ -190,9 +204,18 @@ async def monitor_roulette(roulette_id):
                             elif mesa["gale"] == 2:
                                 mesa["greens_g2"] += 1
 
-                            await send_telegram_message(
-                                f"✅✅✅ GREEN!!! ✅✅✅\n\n({mesa['historico'][0]}|{mesa['historico'][1]}|{mesa['historico'][2]})"
+                            mult_msg = (
+                                f"😱😱😱 PAGOU {multiplicador_atual}x"
+                                if multiplicador_atual
+                                else ""
                             )
+                            n1 = mesa["historico"][0]["number"]
+                            n2 = mesa["historico"][1]["number"]
+                            n3 = mesa["historico"][2]["number"]
+                            await send_telegram_message(
+                                f"✅✅✅ GREEN!!!\n\n{mult_msg}\n({n1}|{n2}|{n3})"
+                            )
+
                             mesa["entrada_ativa"] = False
                             mesa["numero_entrada"] = None
                             mesa["gale"] = 0
@@ -210,9 +233,14 @@ async def monitor_roulette(roulette_id):
                         else:
                             mesa["loss"] += 1
                             mesa["total"] += 1
+
+                            n1 = mesa["historico"][0]["number"]
+                            n2 = mesa["historico"][1]["number"]
+                            n3 = mesa["historico"][2]["number"]
                             await send_telegram_message(
-                                f"❌❌❌ LOSS!!! ❌❌❌\n\n({mesa['historico'][0]}|{mesa['historico'][1]}|{mesa['historico'][2]})"
+                                f"❌❌❌ LOSS!!! ❌❌❌ \n\n({n1}|{n2}|{n3})"
                             )
+
                             mesa["entrada_ativa"] = False
                             mesa["numero_entrada"] = None
                             mesa["gale"] = 0
