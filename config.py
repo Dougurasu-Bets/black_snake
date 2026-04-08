@@ -5,7 +5,7 @@ BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 API_ROULETTE_USER = "DougurasuBets"
 API_ROULETTE_PASSWORD = "9cGGSdFdZBBuA3ppfRKrtTDc"
 API_ROULETTE_RESULTS_URL = (
-    "https://api.dougurasu-bets.online/api/v1/playtech/results/mega-fire-blaze-roulette"
+    "https://api.dougurasu-bets.online/api/v1/playtech/results/brazilian-roulette"
 )
 
 ROULETTES = [
